@@ -1,0 +1,95 @@
+name: "CI/CD — Auth Backend [PROD]"
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      deploy:
+        description: "¿Deployar a AWS PROD? (true = deploy, false = solo build/test)"
+        required: true
+        default: "false"
+        type: choice
+        options: ["true", "false"]
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  GO_VERSION: "1.23"
+  AWS_REGION: us-east-1
+  ENVIRONMENT: prod
+  STACK_NAME: demo-ticketing-auth-prod
+
+jobs:
+  build-and-test:
+    name: "Build & Test (Go — Hexagonal Auth)"
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/*.sum"
+
+      - name: Run Tests
+        run: |
+          for lambda_dir in lambdas/*/; do
+            echo "▶ Testing $lambda_dir"
+            cd "$lambda_dir"
+            go test ./... -v -race -timeout 60s || exit 1
+            cd ../..
+          done
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: SAM Build (validate)
+        run: sam build --parallel
+
+  deploy:
+    name: "Deploy → AWS Auth PROD (demo-ticketing-auth-prod)"
+    needs: build-and-test
+    runs-on: ubuntu-latest
+    if: ${{ github.event.inputs.deploy == 'true' }}
+    environment: prod  # requiere aprobación manual en GitHub Environments
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go ${{ env.GO_VERSION }}
+        uses: actions/setup-go@v5
+        with:
+          go-version: ${{ env.GO_VERSION }}
+          cache-dependency-path: "**/*.sum"
+
+      - name: Configure AWS Credentials (OIDC → auth-prod)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_AUTH_PROD }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup SAM CLI
+        uses: aws-actions/setup-sam@v2
+
+      - name: SAM Build
+        run: sam build --parallel
+
+      - name: SAM Deploy → Auth PROD
+        run: |
+          sam deploy \
+            --no-confirm-changeset \
+            --no-fail-on-empty-changeset \
+            --stack-name ${{ env.STACK_NAME }} \
+            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
+            --region ${{ env.AWS_REGION }} \
+            --parameter-overrides Environment=${{ env.ENVIRONMENT }}
+
+      - name: Summary
+        run: echo "✅ Auth backend deploado en cuenta demo-ticketing-auth-prod"
