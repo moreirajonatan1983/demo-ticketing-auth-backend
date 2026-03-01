@@ -14,8 +14,8 @@ provider "aws" {
   skip_credentials_validation = true
   skip_metadata_api_check     = true
   skip_requesting_account_id  = true
-  
-  # Pointing to LocalStack
+
+  # Pointing to LocalStack (for local dev)
   endpoints {
     apigateway     = "http://localhost:4566"
     cloudwatch     = "http://localhost:4566"
@@ -24,6 +24,11 @@ provider "aws" {
     lambda         = "http://localhost:4566"
     s3             = "http://localhost:4566"
   }
+}
+
+module "iam" {
+  source    = "./modules/iam"
+  role_name = "iam_for_lambda_auth"
 }
 
 data "archive_file" "lambda_generate_zip" {
@@ -38,56 +43,35 @@ data "archive_file" "lambda_authorizer_zip" {
   output_path = "${path.module}/auth_authorizer.zip"
 }
 
-# --- GENERATE TOKEN LAMBDA ---
-resource "aws_lambda_function" "auth_generate" {
-  filename         = data.archive_file.lambda_generate_zip.output_path
+module "lambda_auth_generate" {
+  source           = "./modules/lambda"
+  archive_path     = data.archive_file.lambda_generate_zip.output_path
   function_name    = "demo-auth-generate-tf"
-  role             = aws_iam_role.iam_for_lambda.arn
+  role_arn         = module.iam.role_arn
   handler          = "bootstrap"
   source_code_hash = data.archive_file.lambda_generate_zip.output_base64sha256
-  runtime          = "provided.al2"
-
-  environment {
-    variables = {
-      LAMBDA_HANDLER_MODE = "GENERATE_TOKEN"
-      JWT_SECRET          = "demo-jwt-secret-local"
-    }
+  env_vars = {
+    LAMBDA_HANDLER_MODE = "GENERATE_TOKEN"
+    JWT_SECRET          = "demo-jwt-secret-local"
   }
 }
 
-# --- CUSTOM AUTHORIZER LAMBDA ---
-resource "aws_lambda_function" "auth_authorizer" {
-  filename         = data.archive_file.lambda_authorizer_zip.output_path
+module "lambda_auth_authorizer" {
+  source           = "./modules/lambda"
+  archive_path     = data.archive_file.lambda_authorizer_zip.output_path
   function_name    = "demo-auth-authorizer-tf"
-  role             = aws_iam_role.iam_for_lambda.arn
+  role_arn         = module.iam.role_arn
   handler          = "bootstrap"
   source_code_hash = data.archive_file.lambda_authorizer_zip.output_base64sha256
-  runtime          = "provided.al2"
-
-  environment {
-    variables = {
-      LAMBDA_HANDLER_MODE = "AUTHORIZE"
-      JWT_SECRET          = "demo-jwt-secret-local"
-    }
+  env_vars = {
+    LAMBDA_HANDLER_MODE = "AUTHORIZE"
+    JWT_SECRET          = "demo-jwt-secret-local"
   }
 }
 
-resource "aws_iam_role" "iam_for_lambda" {
-  name = "iam_for_lambda_auth"
-
-  assume_role_policy = <<EOF
-{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Action": "sts:AssumeRole",
-      "Principal": {
-        "Service": "lambda.amazonaws.com"
-      },
-      "Effect": "Allow",
-      "Sid": ""
-    }
-  ]
-}
-EOF
+module "api_gateway" {
+  source                     = "./modules/api_gateway"
+  auth_role_arn              = module.iam.role_arn
+  auth_lambda_invoke_arn     = module.lambda_auth_authorizer.invoke_arn
+  generate_lambda_invoke_arn = module.lambda_auth_generate.invoke_arn
 }

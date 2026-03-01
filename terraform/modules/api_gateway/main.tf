@@ -6,14 +6,10 @@ resource "aws_api_gateway_rest_api" "ticketera_api" {
 resource "aws_api_gateway_authorizer" "jwt_auth" {
   name                   = "demo_jwt_authorizer"
   rest_api_id            = aws_api_gateway_rest_api.ticketera_api.id
-  authorizer_uri         = aws_lambda_function.auth_authorizer.invoke_arn
-  authorizer_credentials = aws_iam_role.iam_for_lambda.arn
+  authorizer_uri         = var.auth_lambda_invoke_arn
+  authorizer_credentials = var.auth_role_arn
   type                   = "TOKEN"
 }
-
-# Proxy resource Catch-All (Since SAM Local runs locally on the host)
-# We will just route /events/* -> port 3000, /shows/* -> port 3007
-# But doing path-based routing in API Gateway requires explicit resources.
 
 # ===================== /auth =====================
 resource "aws_api_gateway_resource" "auth" {
@@ -33,7 +29,7 @@ resource "aws_api_gateway_integration" "auth_lambda" {
   http_method             = aws_api_gateway_method.auth_post.http_method
   integration_http_method = "POST"
   type                    = "AWS_PROXY"
-  uri                     = aws_lambda_function.auth_generate.invoke_arn
+  uri                     = var.generate_lambda_invoke_arn
 }
 
 # ===================== /events =====================
@@ -46,7 +42,7 @@ resource "aws_api_gateway_method" "events_get" {
   rest_api_id   = aws_api_gateway_rest_api.ticketera_api.id
   resource_id   = aws_api_gateway_resource.events.id
   http_method   = "GET"
-  authorization = "NONE" # Public
+  authorization = "NONE"
 }
 resource "aws_api_gateway_integration" "events_get_proxy" {
   rest_api_id             = aws_api_gateway_rest_api.ticketera_api.id
@@ -91,7 +87,6 @@ resource "aws_api_gateway_resource" "tickets" {
   parent_id   = aws_api_gateway_rest_api.ticketera_api.root_resource_id
   path_part   = "tickets"
 }
-# /tickets/{proxy+}
 resource "aws_api_gateway_resource" "tickets_proxy" {
   rest_api_id = aws_api_gateway_rest_api.ticketera_api.id
   parent_id   = aws_api_gateway_resource.tickets.id
