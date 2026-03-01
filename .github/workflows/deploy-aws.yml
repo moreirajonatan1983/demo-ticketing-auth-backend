@@ -1,0 +1,49 @@
+name: Deploy Auth Backend to AWS
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write # Necesario para OIDC Token de AWS
+  contents: read
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.22'
+
+      - name: Build Go Lambdas
+        run: |
+          cd lambdas/auth-generate
+          GOOS=linux GOARCH=amd64 go build -tags lambda.norpc -o bootstrap cmd/api/main.go
+          cd ../auth-authorizer
+          GOOS=linux GOARCH=amd64 go build -tags lambda.norpc -o bootstrap cmd/api/main.go
+
+      - name: Configure AWS Credentials with OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          # Para prod: Asegúrate de crear este rol usando la carpeta terraform-bootstrap y mapear este secreto en Github
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_AUTH_BACKEND }}
+          aws-region: us-east-1
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+
+      - name: Terraform Init & Apply
+        working-directory: ./terraform
+        run: |
+          # Cambiamos `backend-prod.tf.example` a `.tf` para habilitar el backend de S3
+          if [ -f "backend-prod.tf.example" ]; then
+            mv backend-prod.tf.example backend.tf
+          fi
+          terraform init
+          terraform apply -auto-approve
