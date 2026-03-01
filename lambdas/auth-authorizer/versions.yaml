@@ -1,0 +1,11 @@
+name: auth-authorizer-lambda
+description: APIGW Custom Authorizer validating JWT.
+current_version: "2.0.0"
+changelog:
+  - version: "2.0.0"
+    date: "2026-03-01"
+    changes:
+      - Go migration using Hexagonal Arch.
+dependencies:
+  - aws-lambda-go: "~> 1.52"
+  - golang-jwt/jwt: "~> 5.3"
