@@ -46,11 +46,10 @@ jobs:
             cd ../..
           done
 
-      - name: Setup SAM CLI
-        uses: aws-actions/setup-sam@v2
-
-      - name: SAM Build (validate)
-        run: sam build --parallel
+      - name: Build Go binaries
+        run: |
+          GOOS=linux GOARCH=amd64 go build -o lambdas/auth-generate/bootstrap lambdas/auth-generate/main.go
+          GOOS=linux GOARCH=amd64 go build -o lambdas/auth-authorizer/bootstrap lambdas/auth-authorizer/main.go
 
   deploy:
     name: "Deploy → AWS Auth STAGE (demo-ticketing-auth-stage)"
@@ -69,27 +68,30 @@ jobs:
           go-version: ${{ env.GO_VERSION }}
           cache-dependency-path: "**/*.sum"
 
-      - name: Configure AWS Credentials (OIDC → auth-stage)
+      - name: Configure AWS Credentials
         uses: aws-actions/configure-aws-credentials@v4
         with:
-          role-to-assume: ${{ secrets.AWS_ROLE_ARN_AUTH_STAGE }}
+          # Debe ser un rol OIDC configurado en la cuenta Management para poder hacer assume_role hacia Operations y Auth
+          role-to-assume: ${{ secrets.AWS_ROLE_ARN_MANAGEMENT_OIDC }}
           aws-region: ${{ env.AWS_REGION }}
 
-      - name: Setup SAM CLI
-        uses: aws-actions/setup-sam@v2
-
-      - name: SAM Build
-        run: sam build --parallel
-
-      - name: SAM Deploy → Auth STAGE
+      - name: Build Go binaries
         run: |
-          sam deploy \
-            --no-confirm-changeset \
-            --no-fail-on-empty-changeset \
-            --stack-name ${{ env.STACK_NAME }} \
-            --capabilities CAPABILITY_IAM CAPABILITY_NAMED_IAM \
-            --region ${{ env.AWS_REGION }} \
-            --parameter-overrides Environment=${{ env.ENVIRONMENT }}
+          GOOS=linux GOARCH=amd64 go build -o lambdas/auth-generate/bootstrap lambdas/auth-generate/main.go
+          GOOS=linux GOARCH=amd64 go build -o lambdas/auth-authorizer/bootstrap lambdas/auth-authorizer/main.go
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.5.7"
+
+      - name: Terraform Init
+        working-directory: ./terraform
+        run: terraform init -backend-config=backend-stage.conf
+
+      - name: Terraform Apply (STAGE)
+        working-directory: ./terraform
+        run: terraform apply -var-file=stage.tfvars -auto-approve
 
       - name: Summary
-        run: echo "✅ Auth backend deploado en cuenta demo-ticketing-auth-stage"
+        run: echo "✅ Auth backend deployado exitosamente en AWS"
