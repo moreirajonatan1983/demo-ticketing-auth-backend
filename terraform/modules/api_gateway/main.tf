@@ -1,3 +1,29 @@
+# =====================================================================
+# IAM Role para que API Gateway escriba en CloudWatch Logs
+# (requerido a nivel cuenta, una sola vez)
+# =====================================================================
+resource "aws_iam_role" "apigw_cloudwatch" {
+  name = "api-gateway-cloudwatch-logs-${var.environment}"
+
+  assume_role_policy = jsonencode({
+    Version = "2012-10-17"
+    Statement = [{
+      Action    = "sts:AssumeRole"
+      Effect    = "Allow"
+      Principal = { Service = "apigateway.amazonaws.com" }
+    }]
+  })
+}
+
+resource "aws_iam_role_policy_attachment" "apigw_cloudwatch" {
+  role       = aws_iam_role.apigw_cloudwatch.name
+  policy_arn = "arn:aws:iam::aws:policy/service-role/AmazonAPIGatewayPushToCloudWatchLogs"
+}
+
+resource "aws_api_gateway_account" "this" {
+  cloudwatch_role_arn = aws_iam_role.apigw_cloudwatch.arn
+}
+
 resource "aws_api_gateway_rest_api" "auth_api" {
   name        = "demo-ticketing-auth-api-${var.environment}"
   description = "Auth API — genera y valida JWTs para la plataforma de ticketing"
@@ -100,8 +126,20 @@ resource "aws_api_gateway_stage" "auth_stage" {
   rest_api_id   = aws_api_gateway_rest_api.auth_api.id
   stage_name    = var.environment
 
+  depends_on = [aws_api_gateway_account.this]
+
   access_log_settings {
     destination_arn = aws_cloudwatch_log_group.apigw_logs.arn
+    format = jsonencode({
+      requestId      = "$context.requestId"
+      ip             = "$context.identity.sourceIp"
+      caller         = "$context.identity.caller"
+      requestTime    = "$context.requestTime"
+      httpMethod     = "$context.httpMethod"
+      resourcePath   = "$context.resourcePath"
+      status         = "$context.status"
+      responseLength = "$context.responseLength"
+    })
   }
 }
 
